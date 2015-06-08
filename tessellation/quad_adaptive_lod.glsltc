@@ -1,0 +1,59 @@
+
+// quad_texcoord_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 4 control points to form a quadrilateral patch with the
+// outer and inner level-of-detail computed adaptively based on
+// the scaled window-space length of the patch edges.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tcp -oglsl -po InputPatchSize=4 -po PATCH_4 quad_adaptive_lod.glsltc
+
+#version 400 compatibility
+layout(vertices=4) out;  // linear quadrilateral patch
+
+#define TID gl_InvocationID  // thread ID
+
+out float sharable_len[];
+
+in vec3 eye_space_pos[];
+in vec2 scaled_window_space_pos[];
+
+out vec3 eye_space_pos2[];
+out vec3 eye_space_normal[];
+
+// Vertices are in "loop" order, so:
+//
+//   v3 <-- v2
+//    |     ^
+//    v     |
+//   v0 --> v1
+
+void main(void)
+{
+    sharable_len[TID] = distance(scaled_window_space_pos[TID],
+                                 scaled_window_space_pos[(TID+1)%4]);
+    barrier();
+
+    float len0 = sharable_len[0],
+          len1 = sharable_len[1],
+          len2 = sharable_len[2],
+          len3 = sharable_len[3];
+
+    eye_space_pos2[TID] = eye_space_pos[TID];
+    
+    vec3 dpda = eye_space_pos[TID] - eye_space_pos[(TID+1)%4];
+    vec3 dpdb = eye_space_pos[TID] - eye_space_pos[(TID+3)%4];
+    eye_space_normal[TID] = cross(dpda, dpdb);
+                           
+    // Limit level-of-detail output to thread zero.    
+    if (TID == 0) {
+        gl_TessLevelOuter[0] = len0;  // U=0 edge
+        gl_TessLevelOuter[1] = len1;  // V=0 edge
+        gl_TessLevelOuter[2] = len2;  // U=1 edge
+        gl_TessLevelOuter[3] = len3;  // V=1 edge
+        // Inner LOD
+        gl_TessLevelInner[0] = max(len0, len2);  // U direction integral spacing
+        gl_TessLevelInner[1] = max(len1, len3);  // V direction integral spaceing
+    }
+}

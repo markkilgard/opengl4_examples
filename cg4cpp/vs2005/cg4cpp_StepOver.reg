@@ -1,0 +1,14 @@
+REGEDIT4
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\VisualStudio\8.0\NativeDE\StepOver]
+"Cg for C++ everything"="Cg\\:\\:.*"
+"Cg for C++ vector constructors"="Cg\\:\\:__CGvector\\<.*\\>"
+"Cg for C++ matrix constructors"="Cg\\:\\:__CGmatrix\\<.*\\>"
+"Cg for C++ operators"="Cg\\:\\:.*operator\\oper:.*"
+"Cg for C++ In"="Cg\\:\\:In\\<.*\\>"
+"Cg for C++ Out"="Cg\\:\\:Out\\<.*\\>"
+"Cg for C++ InOut"="Cg\\:\\:InOut\\<.*\\>"
+"Cg for C++ wrap type"="Cg\\:\\:__CGwrap_type\\<.*\\>"
+"Cg for C++ cast operators"="Cg\\:\\:.*\\:\\:operator .*"
+"Cg for C++ half"="Cg\\:\\:__CGcustom_float\\<.*\\>"
+"Cg for C++ fixed"="Cg\\:\\:__CGcustom_fixed\\<.*\\>"

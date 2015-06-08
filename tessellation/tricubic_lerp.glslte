@@ -1,0 +1,172 @@
+
+// bicubic_lerp.glslte
+
+// DESCRIPTION:  GLSL tessellation evaluation shader expecting
+// a Bezier triangle patch with 10 control points.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tep -oglsl -po PATCH_10 bicubic_lerp.glslte
+
+#version 400 compatibility
+
+layout(triangles) in;
+layout(ccw) in;
+layout(fractional_odd_spacing) in;
+
+#define SHARE_DATA 0
+#ifndef SHARE_DATA
+#define SHARE_DATA 0 // tries to share data between threads when true
+#endif
+#if SHARE_DATA
+in float sharable_len[];
+#endif
+
+in vec3 eye_space_pos2[];
+
+// Assumes matrix in gluPerspective form
+// Compiles to just 5 MAD ops
+vec4 applyPerspective(mat4 affine_matrix, vec4 v)
+{
+  vec4 r;
+  
+  r[0] = affine_matrix[0][0] * v[0];
+  r[1] = affine_matrix[1][1] * v[1];
+  r[2] = affine_matrix[2][2] * v[2] + affine_matrix[3][2]*v[3];
+  r[3] = -v[2];
+  return r;
+}
+
+void main()
+{
+  // Evaluate position by weighting triangle vertex positions
+  // with the generated vertex's barycentric weights.
+  vec3 barycentric_weights = gl_TessCoord;
+#if SHARE_DATA  // WAR: force input to be used
+  if (barycentric_weights.x == 0.000001) {
+    barycentric_weights.x += sharable_len[0];
+  }
+#endif
+  float s = barycentric_weights.x;
+  float t = barycentric_weights.y;
+  float u = barycentric_weights.z;  // should be 1-s-t
+  
+  vec3 position[10];
+  for (int i = 0; i < 10; i++) {
+      position[i] = eye_space_pos2[i];  
+  }
+      
+  // Think of cubic Bezier triangle as
+  //
+  // AAA -- ACA -- CAC -- CCC  :: position[0..3]
+  //  \     / \    / \    /
+  //   \   /   \  /   \  /
+  //    ABA    ABC    CBC      :: position[4..6]
+  //     \     /  \     /
+  //      \   /    \   /
+  //       BAB      BCB        :: position[7..8]
+  //        \       /
+  //         \     /
+  //           BBB             :: position[9]
+  //
+  // Then the position at (s,t,u) where u=1-s-t is:
+  //
+  //       3           2             2           3           2
+  // P := s  cAAA + 3 s  u cACA + 3 u  s cCAC + u  cCCC + 3 s  t cABA
+  //
+  //                          2             2             2
+  //      + 6 s t u cABC + 3 u  t cCBC + 3 t  s cBAB + 3 t  u cBCB
+  //
+  //         3
+  //      + t  cBBB
+  //
+
+  precise vec4   sss  = s*s*s     * vec4(position[0],1),
+                 sus3 = s*u*s * 3 * vec4(position[1],1),
+                 usu3 = u*s*u * 3 * vec4(position[2],1),
+                 uuu  = u*u*u     * vec4(position[3],1),
+
+                 sts3 = s*t*s * 3 * vec4(position[4],1),
+                 stu6 = s*t*u * 6 * vec4(position[5],1),
+                 utu3 = u*t*u * 3 * vec4(position[6],1),
+
+                 tst3 = t*s*t * 3 * vec4(position[7],1),
+                 tut3 = t*u*t * 3 * vec4(position[8],1),
+         
+                 ttt  = t*t*t     * vec4(position[9],1);
+
+  precise vec4   stE = sts3 + tst3,
+                 tuE = utu3 + tut3,
+                 usE = sus3 + usu3,
+                 E = stE + tuE + usE;
+         
+  precise vec4   stC = sss + ttt,
+                 tuC = ttt + uuu,
+                 usC = uuu + sss,
+                 C = (stC + tuC + usC) * 0.5;
+         
+  precise vec4 p = C + E;
+  precise vec4 clip_space_p = applyPerspective(gl_ProjectionMatrix, p);  
+  gl_Position = clip_space_p;
+  
+  // Now compute gradients dP/ds and dP/dt...
+  //  
+  // Substituting u=1-s-t gives:
+  //
+  //       3           2                                 2
+  // P := s  cAAA + 3 s  (1 - s - t) cACA + 3 (1 - s - t)  s cCAC
+  //
+  //                   3           2
+  //      + (1 - s - t)  cCCC + 3 s  t cABA + 6 s t (1 - s - t) cABC
+  //
+  //                     2             2
+  //      + 3 (1 - s - t)  t cCBC + 3 t  s cBAB
+  //
+  //           2                     3
+  //      + 3 t  (1 - s - t) cBCB + t  cBBB  
+  //
+  //             2                                  2
+  // dP/ds := 3 s  cAAA + 6 s (1 - s - t) cACA - 3 s  cACA - 6 (1 - s - t) s cCAC
+  //
+  //                    2                     2
+  //     + 3 (1 - s - t)  cCAC - 3 (1 - s - t)  cCCC + 6 s t cABA
+  //
+  //     + 6 t (1 - s - t) cABC - 6 s t cABC - 6 (1 - s - t) t cCBC
+  //
+  //          2           2
+  //     + 3 t  cBAB - 3 t  cBCB  
+  //
+  //              2                                            2           2
+  // dP/dt := -3 s  cACA - 6 (1 - s - t) s cCAC - 3 (1 - s - t)  cCCC + 3 s  cABA
+  //
+  //          + 6 s (1 - s - t) cABC - 6 s t cABC - 6 (1 - s - t) t cCBC
+  //
+  //                         2
+  //          + 3 (1 - s - t)  cCBC + 6 t s cBAB + 6 t (1 - s - t) cBCB
+  //
+  //               2           2
+  //          - 3 t  cBCB + 3 t  cBBB
+  //  
+  vec3 dPds =  3*s*s*(position[0]-position[1])
+              +3*t*t*(position[7]-position[8])
+              +3*u*u*(position[2]-position[3])
+              +6*s*t*(position[4]-position[5])
+              +6*t*u*(position[5]-position[6])
+              +6*s*u*(position[1]-position[2]);
+
+  vec3 dPdt =  3*s*s*(position[4]-position[1])
+              +6*s*u*(position[5]-position[2])
+              +3*u*u*(position[6]-position[3])
+              +6*t*s*(position[7]-position[5])
+              +6*t*u*(position[8]-position[6])
+              +3*t*t*(position[9]-position[8]);
+  
+  vec3 normal = cross(dPds, dPdt);
+  
+  // Visualize barycentric weights as color.  
+  vec4 color = vec4(gl_TessCoord.xy, 1, 1);  
+  gl_FrontColor = color;  
+  
+  gl_TexCoord[0] = vec4(normalize(normal),1);  
+  gl_TexCoord[1] = vec4(p.xyz/p.w, 1);
+}
+

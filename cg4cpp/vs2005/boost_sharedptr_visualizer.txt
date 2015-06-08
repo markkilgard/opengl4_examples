@@ -1,0 +1,100 @@
+;------------------------------------------------------------------------------
+;  boost::shared_ptr Visualizer for Visual Studio 2008(2005)
+;
+;  by Giovanni Dicanio
+;  <giovanni.dicanio@gmail.com>
+;
+;  2009, January 27th
+;
+;    *** To be added in [Visualizer] section of autoexp.dat of VS2008 ***
+;
+;
+;  This visualizer is basically the same visualizer written by Stephan 'STL'
+;  (Microsoft SDE) for std::tr1::shared_ptr, with very small changes to adapt 
+;  it to the Boost version of shared_ptr.
+;
+;  The main task to adapt STL's shared_ptr visualizer to Boost version for me
+;  has been to "reverse engineer" Boost shared_ptr, and related classes,
+;  trying to properly move in the "maze" of #ifdef's and other stuff in 
+;  Boost source code.
+;
+;  This is the result of this "reverse engineering" of boost::shared_ptr:
+;
+;  boost::shared_ptr has two data members:
+;
+;     - px : the raw pointer (T*).
+;
+;     - pn : an instance of boost::detail::shared_count, storing the reference
+;            counter block.
+;
+;  boost::detail::shared_count has a private data member: 
+;
+;     - pi_ : sp_counted_base *
+;
+;  pi_ is a pointer to a class called sp_counted_base.
+;  Following the maze of #ifdef's in Boost source code, it seems that on
+;  Win32 platform the sp_counted_base actually used is the one provided in 
+;  an header file named 'sp_counted_base_w32.hpp'.
+;  This class has two private data members:
+;    
+;     long use_count_;
+;     long weak_count_;
+;  
+;  So, if $e represents a shared_ptr, to get the strong refs, we can do:
+;
+;     $e.pn.pi_->use_count_
+;
+;  and to get the weak refs, we can do:
+;
+;     $e.pn.pi_->weak_count_
+;
+;
+;------------------------------------------------------------------------------
+boost::shared_ptr<*>{
+    preview (
+        ; shared_ptr<T> stores a T * px .
+        #if ($e.px == 0) (
+            ; A default-constructed shared_ptr has a null px.
+            ; We preview with "empty".
+            "empty"
+        ) #else (
+            ; Raw pointers are previewed with "<pointer value> <object>".
+            ; auto_ptr is previewed with "auto_ptr <object>".
+            ; Following these examples, shared_ptr is previewed with
+            ; "shared_ptr <object> [N strong refs, M weak refs]".
+            #(
+                "shared_ptr ",
+                *$e.px,
+                " [",
+                $e.pn.pi_->use_count_,
+                #if ($e.pn.pi_->use_count_ == 1) (" strong ref") #else (" strong refs"),
+                #if ($e.pn.pi_->weak_count_ - 1 > 0) (
+                    #(
+                        ", ",
+                        $e.pn.pi_->weak_count_ - 1,
+                        #if ($e.pn.pi_->weak_count_ - 1 == 1) (" weak ref") #else (" weak refs")
+                    )
+                ),
+                "]"
+            )
+        )
+    )
+
+    children (
+        #if ($e.px == 0) (
+            ; We make empty shared_ptrs (and shared_ptrs that own
+            ; the null pointer) appear to have no children.
+            #array(expr: 0, size: 0)
+        ) #else (
+            #(
+                ; We make shared_ptr appear to have a single child,
+                ; its stored pointer, with a fake name of [ptr].
+                #([ptr] : $e.px),
+
+                ; Visualizers can't determine whether a shared_ptr has a custom deleter.
+                ; Therefore, we also show the actual members.
+                #([actual members] : [$e,!])
+            )
+        )
+    )
+}

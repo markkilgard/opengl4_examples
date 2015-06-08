@@ -1,0 +1,49 @@
+
+// quad_texcoord_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 4 control points to form a linear quadrilateral patch with the
+// outer level-of-detail specified by the (s,t,p,q) of texture coordinate
+// set 0 and the inner level-of-detail specified by (s,t) of texture
+// coordinate set 1.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tcp -oglsl -po InputPatchSize=4 -po PATCH_4 quad_texcoord_lod.glsltc
+
+#version 400 compatibility
+layout(vertices=4) out;  // linear quadrilateral patch
+
+#define TID gl_InvocationID  // thread ID
+
+in vec3 eye_space_pos[];
+
+out vec3 eye_space_pos2[];
+out vec3 eye_space_normal[];
+
+// Vertices are in "loop" order, so:
+//
+//   v3 <-- v2
+//    |     ^
+//    v     |
+//   v0 --> v1
+
+void main(void)
+{
+    eye_space_pos2[TID] = eye_space_pos[TID];
+    
+    vec3 dpda = eye_space_pos[TID] - eye_space_pos[(TID+1)%4];
+    vec3 dpdb = eye_space_pos[TID] - eye_space_pos[(TID+3)%4];
+    eye_space_normal[TID] = cross(dpda, dpdb);    
+    
+    // The following statements only need to execute on thread 0 (TID == 0)...
+    // But it is more efficient to simply have all threads execute them.
+    
+    // Outer LOD
+    gl_TessLevelOuter[0] = gl_in[0].gl_TexCoord[0].s;  // U=0 edge
+    gl_TessLevelOuter[1] = gl_in[0].gl_TexCoord[0].t;  // V=0 edge
+    gl_TessLevelOuter[2] = gl_in[0].gl_TexCoord[0].p;  // U=1 edge
+    gl_TessLevelOuter[3] = gl_in[0].gl_TexCoord[0].q;  // V=0 edge
+    // Inner LOD
+    gl_TessLevelInner[0] = gl_in[0].gl_TexCoord[1].s;  // U direction integral spacing
+    gl_TessLevelInner[1] = gl_in[0].gl_TexCoord[1].t;  // V direction integral spaceing
+}

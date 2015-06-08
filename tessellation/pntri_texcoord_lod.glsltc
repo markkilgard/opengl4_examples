@@ -1,0 +1,90 @@
+
+// pntri_texcoord_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 3 control points to form a triangle patch with the
+// outer level-of-detail specified by the (s,t,p,q) of texture coordinate
+// set 0 and the inner level-of-detail specified by (s,t) of texture
+// coordinate set 1.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tcp -oglsl -po InputPatchSize=3 -po PATCH_3 pntri_texcoord_lod.glsltc
+
+#version 400 compatibility
+layout(vertices=3) out;  // linear triangle patch
+
+#define TID gl_InvocationID  // thread ID
+
+in vec3 eye_space_pos[];
+in vec2 scaled_window_space_pos[];
+in vec3 eye_normal[];
+
+out vec3 eye_space_pos2[];
+out vec3 eye_space_normal[];
+
+patch out precise vec3 b210, b120, b021, b012, b102, b201, b111;
+patch out precise vec3 n200, n020, n002, n110, n011, n101;
+
+precise float pdot(precise vec3 a, precise vec3 b)
+{
+  // Various alternatives I tried...
+  return a.x*b.x + a.y*b.y + a.z*b.z;
+  return dot(a,b);
+  return fma(a.x,b.x,0.5*a.y*b.y) + fma(a.z,b.z,0.5*a.y*b.y);
+}
+
+void main(void)
+{
+    eye_space_pos2[TID] = eye_space_pos[TID];    
+    eye_space_normal[TID] = eye_normal[TID];    
+    
+    precise vec3 P1 = eye_space_pos[0],
+                 P2 = eye_space_pos[1],
+                 P3 = eye_space_pos[2];
+    precise vec3 N1 = eye_normal[0],
+                 N2 = eye_normal[1],
+                 N3 = eye_normal[2];         
+    
+    precise vec3 b300 = P1,
+                 b030 = P2,
+                 b003 = P3;
+         
+    precise float w12 = pdot(P2-P1,N1),
+                  w21 = pdot(P1-P2,N2),
+                  w23 = pdot(P3-P2,N2),
+                  w32 = pdot(P2-P3,N3),
+                  w31 = pdot(P1-P3,N3),
+                  w13 = pdot(P3-P1,N1);
+                  
+    b210 = (2*P1+P2-w12*N1)/3.0,
+    b120 = (2*P2+P1-w21*N2)/3.0,
+    b021 = (2*P2+P3-w23*N2)/3.0,
+    b012 = (2*P3+P2-w32*N3)/3.0,
+    b102 = (2*P3+P1-w31*N3)/3.0,
+    b201 = (2*P1+P3-w13*N1)/3.0;
+    
+    precise vec3 E = (b210+b120+b021+b012+b102+b201)/6.0,
+                 V = (P1+P2+P3)/3.0;
+
+    b111 = E + (E-V)/2.0;
+    
+    float v12 = 2*pdot(P2-P1,N1+N2) / pdot(P2-P1,P2-P1);
+    vec3 h110 = N1 + N2 - v12*(P2-P1);
+    n110 = normalize(h110);
+    float v23 = 2*pdot(P3-P2,N2+N3) / pdot(P3-P2,P3-P2);
+    vec3 h011 = N2 + N3 - v23*(P3-P2);
+    n011 = normalize(h011);
+    float v31 = 2*pdot(P1-P3,N1+N3) / pdot(P1-P3,P1-P3);
+    vec3 h101 = N3 + N1 - v31*(P1-P3);
+    n101 = normalize(h101);
+    
+    // The following statements only need to execute on thread 0 (TID == 0)...
+    // But it is more efficient to simply have all threads execute them.
+    
+    // Outer LOD
+    gl_TessLevelOuter[0] = gl_in[0].gl_TexCoord[0].s;
+    gl_TessLevelOuter[1] = gl_in[0].gl_TexCoord[0].t;
+    gl_TessLevelOuter[2] = gl_in[0].gl_TexCoord[0].p;
+    // Inner LOD
+    gl_TessLevelInner[0] = gl_in[0].gl_TexCoord[1].s;
+}

@@ -1,0 +1,59 @@
+
+// bicubic_adaptive_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 16 control points to form a bicubic quadrilateral patch with the
+// outer level-of-detail proportional to the hull distance for the
+// 4 control points along each edge.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tcp -oglsl -po InputPatchSize=16 -po PATCH_16 bicubic_adaptive_lod.glsltc
+
+#version 400 compatibility
+layout(vertices=16) out;
+
+#define TID gl_InvocationID  // thread ID
+
+out float sharable_len[];
+
+in vec3 eye_space_pos[];
+in vec2 scaled_window_space_pos[];
+
+out vec3 eye_space_pos2[];
+
+float approx_cubic_arc_length(vec2 a, vec2 b, vec2 c, vec2 d)
+{ 
+   // Based on on Gravesen approximation...
+   float len = 0.5*(distance(a,b) + distance(b,c) + distance(c,d)) + 0.5*distance(d,a);
+   return max(1,len);
+}
+
+void main(void)
+{
+    float lenU0, lenV0, lenU1, lenV1;
+    
+    float lenUA, lenUB, lenVA, lenVB;
+
+    lenU0 = approx_cubic_arc_length(scaled_window_space_pos[0],scaled_window_space_pos[1],scaled_window_space_pos[2],scaled_window_space_pos[3]);
+    lenUA = approx_cubic_arc_length(scaled_window_space_pos[4],scaled_window_space_pos[5],scaled_window_space_pos[6],scaled_window_space_pos[7]);
+    lenUB = approx_cubic_arc_length(scaled_window_space_pos[8],scaled_window_space_pos[9],scaled_window_space_pos[10],scaled_window_space_pos[11]);
+    lenU1 = approx_cubic_arc_length(scaled_window_space_pos[12],scaled_window_space_pos[13],scaled_window_space_pos[14],scaled_window_space_pos[15]);    
+    lenV0 = approx_cubic_arc_length(scaled_window_space_pos[0],scaled_window_space_pos[4],scaled_window_space_pos[8],scaled_window_space_pos[12]);
+    lenVA = approx_cubic_arc_length(scaled_window_space_pos[1],scaled_window_space_pos[5],scaled_window_space_pos[9],scaled_window_space_pos[13]);
+    lenVB = approx_cubic_arc_length(scaled_window_space_pos[2],scaled_window_space_pos[6],scaled_window_space_pos[10],scaled_window_space_pos[14]);
+    lenV1 = approx_cubic_arc_length(scaled_window_space_pos[3],scaled_window_space_pos[7],scaled_window_space_pos[11],scaled_window_space_pos[15]);
+    
+    eye_space_pos2[TID] = eye_space_pos[TID];
+    
+    // Limit level-of-detail output to thread zero.    
+    if (TID == 0) {
+        // Outer LOD
+        gl_TessLevelOuter[0] = lenU0;  // U=0 edge
+        gl_TessLevelOuter[1] = lenV0;  // V=0 edge
+        gl_TessLevelOuter[2] = lenU1;  // U=1 edge
+        gl_TessLevelOuter[3] = lenV1;  // V=1 edge
+        // Inner LOD
+        gl_TessLevelInner[0] = max(lenVA, lenVB);  // U direction integral spacing
+        gl_TessLevelInner[1] = max(lenUA, lenUB);  // V direction integral spaceing        
+    }
+}

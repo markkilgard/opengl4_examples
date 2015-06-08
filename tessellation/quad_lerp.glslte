@@ -1,0 +1,85 @@
+
+// quad_lerp.glslte
+
+// DESCRIPTION:  GLSL tessellation evaluation shader expecting
+// a triangle patch with 3 control points.  The evaluated position
+// is simply the 3 control points weighted by the triangle patch's
+// barycentric weights.
+
+// To off-line this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tep -oglsl -po PATCH_4 quad_lerp.glslte
+
+#version 400 compatibility
+
+layout(quads) in;
+layout(ccw) in;
+layout(fractional_odd_spacing) in;
+
+#define SHARE_DATA 0
+#if SHARE_DATA
+in vec2 sharable_wpos[];
+in float sharable_len[];
+#endif
+
+in vec3 eye_space_normal[];
+in vec3 eye_space_pos2[];
+
+// Vertices are in "loop" order, so:
+//
+//   v0 --> v1
+//   ^      |
+//   |      v
+//   v3 <-- v2
+
+// Bilinear weight.
+vec3 lerp3(vec3 attrs[4], vec2 bilinear_weights)
+{
+    vec3 r0 = mix(attrs[0], attrs[1], bilinear_weights.x);
+    vec3 r1 = mix(attrs[3], attrs[2], bilinear_weights.x);
+    return mix(r0, r1, bilinear_weights.y);
+}
+
+// Assumes matrix in gluPerspective form
+// Compiles to just 4 MAD ops
+vec4 applyPerspective(mat4 affine_matrix, vec3 v)
+{
+  vec4 r;
+  
+  r[0] = affine_matrix[0][0] * v[0];
+  r[1] = affine_matrix[1][1] * v[1];
+  r[2] = affine_matrix[2][2] * v[2] + affine_matrix[3][2];
+  r[3] = -v[2];
+  return r;
+}
+
+void main(void)
+{
+  // Evaluate position by weighting triangle vertex positions
+  // with the generated vertex's barycentric weights.
+  vec2 bilinear_weights = gl_TessCoord.xy;
+#if SHARE_DATA  // WAR: force input to be used
+  if (bilinear_weights.x == 0.000001) {
+    bilinear_weights.x += sharable_wpos[0].x;
+    bilinear_weights.x += sharable_len[0];
+  }
+#endif  
+  vec3 v[4];
+  for (int i = 0; i < 4; i++) {
+    v[i] = eye_space_pos2[i];
+  }
+  vec3 p = lerp3(v, bilinear_weights);
+  gl_Position = applyPerspective(gl_ProjectionMatrix, p);  
+  
+  vec3 n[4];
+  for (int i = 0; i < 4; i++) {
+    n[i] = eye_space_normal[i];  
+  }
+  vec3 normal = lerp3(n, bilinear_weights);  
+  
+  // Visualize bilinear weights as color.
+  vec4 color = vec4(bilinear_weights, 1, 1);  
+  gl_FrontColor = color;
+  gl_TexCoord[0] = vec4(normalize(normal),length(normalize(normal)));  
+  gl_TexCoord[1] = vec4(p, 1);  
+}
+

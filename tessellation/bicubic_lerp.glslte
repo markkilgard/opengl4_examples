@@ -1,0 +1,160 @@
+
+// bicubic_lerp.glslte
+
+// DESCRIPTION:  GLSL tessellation evaluation shader expecting
+// a bicubic quadrilateral patch with 16 control points.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tep -oglsl -po PATCH_16  bicubic_lerp.glslte
+
+#version 400 compatibility
+
+layout(quads) in;
+layout(ccw) in;
+layout(fractional_odd_spacing) in;
+
+#define SHARE_DATA 0
+#ifndef SHARE_DATA
+#define SHARE_DATA 0 // tries to share data between threads when true
+#endif
+#if SHARE_DATA
+in float sharable_len[];
+#endif
+
+// Bilinear weight.
+vec3 lerp3(vec3 attrs[4], vec2 bilinear_weights)
+{
+    vec3 r0 = mix(attrs[0], attrs[1], bilinear_weights.x);
+    vec3 r1 = mix(attrs[2], attrs[3], bilinear_weights.x);
+    return mix(r0, r1, bilinear_weights.y);
+}
+
+// Assumes matrix in gluPerspective form
+// Compiles to just 4 MAD ops
+vec4 applyPerspective(mat4 affine_matrix, vec3 v)
+{
+  vec4 r;
+  
+  r[0] = affine_matrix[0][0] * v[0];
+  r[1] = affine_matrix[1][1] * v[1];
+  r[2] = affine_matrix[2][2] * v[2] + affine_matrix[3][2];
+  r[3] = -v[2];
+  return r;
+}
+
+// GLSL standard library fma() lacks a (float,vec3,vec3) prototype.
+// Make up for this deficiency...
+// svv = Scalar/Vector/Vector
+// fma = Floating-point Multiply-Add
+vec3 svv_fma(float scalar, vec3 v1, vec3 v2)
+{
+  return fma(vec3(scalar),v1,v2);
+}
+
+in vec3 eye_space_pos2[];
+
+void main()
+{
+  // Evaluate position by weighting triangle vertex positions
+  // with the generated vertex's barycentric weights.
+  vec2 uv = gl_TessCoord.xy;
+  
+#if SHARE_DATA  // WAR: force input to be used
+  if (uv.x == 0.000001) {
+    uv.x += sharable_len[0];
+  }
+#endif  
+  vec3 position[16];
+  for (int i = 0; i < 16; i++)
+      position[i] = eye_space_pos2[i];
+  
+  // Compute Bernstein weights for U (1 ADD, 8 MULs)
+  float  u          = uv.x;
+  float  uu         = u*u;
+  float  oneMinusU  = 1-u;
+  float  oneMinusUU = oneMinusU*oneMinusU;
+  float Bu[4];
+  Bu[0] = (oneMinusU*oneMinusUU); // (1-u)^3
+  Bu[1] = (3*u*oneMinusUU);       // 3u(1-u)^2
+  Bu[2] = (3*uu*oneMinusU);       // 3u^2(1-u)
+  Bu[3] = (u*uu);                 // u^3
+
+  // Compute Bernstein weights for V (1 ADD, 8 MULs)
+  float  v          = uv.y;
+  float  vv         = v*v;
+  float  oneMinusV  = 1-v;
+  float  oneMinusVV = oneMinusV*oneMinusV;
+  float Bv[4];
+  Bv[0] = (oneMinusV*oneMinusVV); // (1-v)^3
+  Bv[1] = (3*v*oneMinusVV);       // 3v(1-v)^2
+  Bv[2] = (3*vv*oneMinusV);       // 3v^2(1-v)
+  Bv[3] = (v*vv);                 // v^3
+
+  // Four horizontally symmetric sum-of-products with Bu weights (3*8 MULs, 3*8 MADs, 3*4 ADDs)
+  precise vec3 w0 = svv_fma(Bu[0], position[0], Bu[1]*position[4]) + svv_fma(Bu[3], position[12], Bu[2]*position[8]),
+               w1 = svv_fma(Bu[0], position[1], Bu[1]*position[5]) + svv_fma(Bu[3], position[13], Bu[2]*position[9]),
+               w2 = svv_fma(Bu[0], position[2], Bu[1]*position[6]) + svv_fma(Bu[3], position[14], Bu[2]*position[10]),
+               w3 = svv_fma(Bu[0], position[3], Bu[1]*position[7]) + svv_fma(Bu[3], position[15], Bu[2]*position[11]);
+
+  vec3 p = svv_fma(Bv[0],w0,Bv[1]*w1) + svv_fma(Bv[3],w3,Bv[2]*w2);
+  
+  gl_Position = applyPerspective(gl_ProjectionMatrix, p);    
+  
+  // Squeeze uv slightly to avoid co-located control point issues.
+  uv = 254.0/256.0 * uv + 1.0/256.0;
+
+  // Compute gradients in U and V
+
+  u          = uv.x;
+  uu         = u*u;
+  oneMinusU  = 1-u;
+  oneMinusUU = oneMinusU*oneMinusU;  
+  v          = uv.y;
+  vv         = v*v;
+  oneMinusV  = 1-v;
+  oneMinusVV = oneMinusV*oneMinusV;  
+  
+  float dBu[4];
+  dBu[0] = -3*oneMinusUU;                 // -3(1-u)^2
+  dBu[1] = -6*u*oneMinusU + 3*oneMinusUU; // -6u(1-u)+3(1-u)^2
+  dBu[2] = -3*uu + 6*u*oneMinusU;         // -3u^2+6u(1-u)
+  dBu[3] = 3*uu;                          // 3u^2  
+  float dBv[4];
+  dBv[0] = -3*oneMinusVV;                 // -3(1-v)^2
+  dBv[1] = -6*v*oneMinusV + 3*oneMinusVV; // -6v(1-v)+3(1-v)^2
+  dBv[2] = -3*vv + 6*v*oneMinusV;         // -3v^2+6v(1-v)
+  dBv[3] = 3*vv;                          // 3v^2  
+
+  // Gradient in U direction...
+  precise vec3 uw0 = svv_fma(dBu[0], position[0], dBu[1]*position[4]) 
+                   + svv_fma(dBu[3], position[12], dBu[2]*position[8]),
+               uw1 = svv_fma(dBu[0], position[1], dBu[1]*position[5])
+                   + svv_fma(dBu[3], position[13], dBu[2]*position[9]),
+               uw2 = svv_fma(dBu[0], position[2], dBu[1]*position[6])
+                   + svv_fma(dBu[3], position[14], dBu[2]*position[10]),
+               uw3 = svv_fma(dBu[0], position[3], dBu[1]*position[7])
+                   + svv_fma(dBu[3], position[15], dBu[2]*position[11]);
+  vec3 gradU = svv_fma(Bv[0],uw0,Bv[1]*uw1) + svv_fma(Bv[3],uw3,Bv[2]*uw2);
+
+  // Gradient in V direction...
+  precise vec3 vw0 = svv_fma(dBv[0], position[0], dBv[1]*position[1])
+                   + svv_fma(dBv[3], position[3], dBv[2]*position[2]),
+               vw1 = svv_fma(dBv[0], position[4], dBv[1]*position[5])
+                   + svv_fma(dBv[3], position[7], dBv[2]*position[6]),
+               vw2 = svv_fma(dBv[0], position[8], dBv[1]*position[9])
+                   + svv_fma(dBv[3], position[11], dBv[2]*position[10]),
+               vw3 = svv_fma(dBv[0], position[12], dBv[1]*position[13])
+                   + svv_fma(dBv[3], position[15], dBv[2]*position[14]);
+  vec3 gradV = svv_fma(Bu[0],vw0,Bu[1]*vw1) + svv_fma(Bu[3],vw3,Bu[2]*vw2);
+  
+  // Cross product of gradients generates the surface normal.
+  vec3 normal = cross(gradU, gradV);
+  
+  // Visualize bilinear weights as color.
+  vec4 color = vec4(gl_TessCoord.xy, 1, 1);  
+  gl_FrontColor = color;  
+
+  gl_TexCoord[0] = vec4(normalize(normal),length(normalize(normal)));
+  gl_TexCoord[1] = vec4(p, 1);
+}
+

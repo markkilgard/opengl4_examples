@@ -1,0 +1,115 @@
+
+// pntri_lerp.glslte
+
+// DESCRIPTION:  GLSL tessellation evaluation shader expecting
+// a Bezier triangle with 10 position control points generated from
+// a PN triangle with 3 control points.  The evaluated position
+// is the 10 control points weighted by the triangle patch's
+// barycentric weights with a cubic basis.  The evaluated normal
+// used 6 control points for quadratic normal interpolation.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tep -oglsl -po PATCH_3 pntri_lerp.glslte
+
+#version 400 compatibility
+
+layout(triangles) in;
+layout(ccw) in;
+layout(fractional_even_spacing) in;
+
+// Assumes matrix in gluPerspective form
+// Intended to be cheaper than full 4x4 transform by projection matrix
+// Compiles to just 5 MAD ops
+precise vec4 applyPerspective(precise mat4 affine_matrix, precise vec4 v)
+{
+  precise vec4 r;
+  
+  r[0] = affine_matrix[0][0] * v[0];
+  r[1] = affine_matrix[1][1] * v[1];
+  r[2] = affine_matrix[2][2] * v[2] + affine_matrix[3][2]*v[3];
+  r[3] = -v[2];
+  return r;
+}
+
+// 10 input control points for Bezier triangle position
+in precise vec3 eye_space_pos2[];
+in precise vec3 ccw_cp[];
+in precise vec3 cw_cp[];
+patch in precise vec3 b111;
+
+// 6 input control points for quadratic normal interpolation
+in precise vec3 eye_space_normal[];
+in vec3 mid_normal[];
+
+void main(void)
+{
+  // Evaluate position by weighting triangle vertex positions
+  // with the generated vertex's barycentric weights.
+  vec3 barycentric_weights = gl_TessCoord;
+  
+  precise float u = barycentric_weights.x,
+                v = barycentric_weights.y,
+                w = barycentric_weights.z;  // should be 1-s-t
+  
+  vec3 triangle_vertex[3];
+  for (int i = 0; i < 3; i++) {
+    triangle_vertex[i] = eye_space_pos2[i];
+  }
+  
+  // 10 position control points of a Bezier triangle
+  precise vec3 b300 = eye_space_pos2[0],
+               b030 = eye_space_pos2[1],
+               b003 = eye_space_pos2[2],
+  
+               b210 = ccw_cp[0],
+               b201 = cw_cp[0],
+               b021 = ccw_cp[1],
+               b120 = cw_cp[1],
+               b102 = ccw_cp[2],
+               b012 = cw_cp[2];    
+  
+  // Weight the position control points with a (cubic) Bezier triangle basis
+  precise vec3 www  = w*w*w * b300,
+               uuu  = u*u*u * b030,
+               vvv  = v*v*v * b003,
+
+               wwu3 = 3*w*w*u * b210,
+               wuu3 = 3*w*u*u * b120,
+               wwv3 = 3*w*w*v * b201,
+                 
+               uuv3 = 3*u*u*v * b021,
+               wvv3 = 3*w*v*v * b102,
+               uvv3 = 3*u*v*v * b012,
+
+               wuv6 = 6*w*u*v * b111,
+                 
+               wuE = wwu3 + wuu3,
+               uvE = uvv3 + uuv3,
+               wvE = wwv3 + wvv3,
+               E = wuE + uvE + wvE,
+               C = www + uuu + vvv,
+               p = C + E + wuv6;
+  vec4 clip_space_p = applyPerspective(gl_ProjectionMatrix, vec4(p,1));
+
+  gl_Position = clip_space_p;  
+
+  // Weight the normal control points with a quadratic basis
+  vec3 n200 = eye_space_normal[0],
+       n020 = eye_space_normal[1],
+       n002 = eye_space_normal[2],
+       n110 = mid_normal[0],
+       n011 = mid_normal[1],
+       n101 = mid_normal[2],
+       normal = n200*w*w + n020*u*u + n002*v*v
+              + n110*w*u + n011*u*v + n101*w*v;
+         
+  // Visualize barycentric weights as color.
+  vec4 color = vec4(barycentric_weights, 1.0);  
+  gl_FrontColor = color;
+  
+  // Output the normalized surface normal
+  gl_TexCoord[0] = vec4(normalize(normal),1);
+  
+  // Output the (perspective-divided) eye-space view vector
+  gl_TexCoord[1] = vec4(p, 1);
+}

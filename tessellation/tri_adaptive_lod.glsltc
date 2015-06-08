@@ -1,0 +1,30 @@
+
+// tri_adaptive_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 3 control points to form a triangle patch with the
+// outer level-of-detail being directly proportional to the
+// window space length of the triangle path edges.
+
+#version 400 compatibility
+layout(vertices=3) out;
+
+#define TID gl_InvocationID  // thread ID
+
+in vec3 eye_space_pos[];
+in vec2 scaled_window_space_pos[];
+
+out vec3 eye_space_pos2[];
+
+void main(void)
+{
+    // Compute triangle LOD parameters.
+    // Each of 3 threads computes each of 3 edge lengths.
+    gl_TessLevelOuter[TID] = distance(scaled_window_space_pos[(TID+2)%3],
+                                      scaled_window_space_pos[TID]);                                 
+    barrier();
+    gl_TessLevelInner[0] = max(gl_TessLevelOuter[0],
+                               max(gl_TessLevelOuter[1],gl_TessLevelOuter[2]));
+
+    eye_space_pos2[TID] = eye_space_pos[TID];
+}

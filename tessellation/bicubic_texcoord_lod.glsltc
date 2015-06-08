@@ -1,0 +1,34 @@
+
+// bicubic_texcoord_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 16 control points to form a quadrilateral bicubic patch with the
+// outer level-of-detail specified by the (s,t,p,q) of texture coordinate
+// set 0 and the inner level-of-detail specified by (s,t) of texture
+// coordinate set 1.
+
+#version 400 compatibility
+layout(vertices=16) out;  // bicubic quadrilateral patch
+
+#define TID gl_InvocationID  // thread ID
+
+in vec3 eye_space_pos[];
+
+out vec3 eye_space_pos2[];
+
+void main(void)
+{
+    eye_space_pos2[TID] = eye_space_pos[TID];
+
+    // The following statements only need to execute on thread 0 (TID == 0)...
+    // But it is more efficient to simply have all threads execute them.
+    
+    // Outer LOD
+    gl_TessLevelOuter[0] = gl_in[0].gl_TexCoord[0].s;
+    gl_TessLevelOuter[1] = gl_in[0].gl_TexCoord[0].t;
+    gl_TessLevelOuter[2] = gl_in[0].gl_TexCoord[0].p;
+    gl_TessLevelOuter[3] = gl_in[0].gl_TexCoord[0].q;
+    // Inner LOD
+    gl_TessLevelInner[0] = gl_in[0].gl_TexCoord[1].s;
+    gl_TessLevelInner[1] = gl_in[0].gl_TexCoord[1].t;
+}

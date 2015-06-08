@@ -1,0 +1,75 @@
+
+// tri_lerp.glslte
+
+// DESCRIPTION:  GLSL tessellation evaluation shader expecting
+// a triangle patch with 3 control points.  The evaluated position
+// is simply the 3 control points weighted by the triangle patch's
+// barycentric weights.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tep -oglsl -po PATCH_3 tri_lerp.glslte
+
+#version 400 compatibility
+
+layout(triangles) in;
+layout(ccw) in;
+layout(fractional_odd_spacing) in;
+
+#define SHARE_DATA 0
+#ifndef SHARE_DATA
+#define SHARE_DATA 0 // tries to share data between threads when true
+#endif
+#if SHARE_DATA
+in float sharable_len[];
+#endif
+
+in vec3 eye_space_pos2[];
+
+// Linearly interpolated with barycentric weights.
+vec3 lerp3(in vec3 attrs[3], vec3 uvw)
+{
+  return attrs[0] * uvw[0] +
+         attrs[1] * uvw[1] +
+         attrs[2] * uvw[2];
+}
+
+// Assumes matrix in gluPerspective form
+// Compiles to just 4 MAD ops
+vec4 applyPerspective(mat4 affine_matrix, vec3 v)
+{
+  vec4 r;
+  
+  r[0] = affine_matrix[0][0] * v[0];
+  r[1] = affine_matrix[1][1] * v[1];
+  r[2] = affine_matrix[2][2] * v[2] + affine_matrix[3][2];
+  r[3] = -v[2];
+  return r;
+}
+
+void main(void)
+{
+  // Evaluate position by weighting triangle vertex positions
+  // with the generated vertex's barycentric weights.
+  vec3 barycentric_weights = gl_TessCoord;
+#if SHARE_DATA  // WAR: force input to be used
+  if (barycentric_weights.x == 0.000001) {
+    barycentric_weights.x += sharable_len[0];
+  }
+#endif    
+  vec3 v[3];
+  for (int i = 0; i < 3; i++) {
+      v[i] = eye_space_pos2[i];
+  }
+  vec3 p = lerp3(v, barycentric_weights);
+  gl_Position = applyPerspective(gl_ProjectionMatrix, p);
+  
+  vec3 dpdv = eye_space_pos2[1] - eye_space_pos2[0];
+  vec3 dpdw = eye_space_pos2[2] - eye_space_pos2[0];
+  vec3 normal = cross(dpdv, dpdw);
+  
+  // Visualize barycentric weights as color.
+  vec4 color = vec4(barycentric_weights, 1.0);  
+  gl_FrontColor = color;
+  gl_TexCoord[0] = vec4(normalize(normal),length(normalize(normal)));
+  gl_TexCoord[1] = vec4(p, 1);  
+}

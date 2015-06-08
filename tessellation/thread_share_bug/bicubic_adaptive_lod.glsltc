@@ -1,0 +1,125 @@
+
+// bicubic_adaptive_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 16 control points to form a bicubic quadrilateral patch with the
+// outer level-of-detail proportional to the hull distance for the
+// 4 control points along each edge.
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tcp -oglsl -po InputPatchSize=16 -po PATCH_16 bicubic_adaptive_lod.glsltc
+
+#version 400 compatibility
+layout(vertices=16) out;
+
+
+/* If SHARED_LOD is defined, then it will use computations from other threads within 
+ * the same patch.  If it is not defined, it will have to compute all the values
+ * per thread.
+ * The visual results should be the same using or not using SHARED_LOD.  In software
+ * mode this is true, in hardware mode this is not true: the shader does not
+ * produce the correct results.
+ *
+ * Instruction counts
+ * SHARED_LOD     - 64 instructions, 1 R-register
+ * not SHARED_LOD - 196 instructions, 10 R-registers
+*/
+#define SHARED_LOD
+
+#define TID gl_InvocationID  // thread ID
+
+in vec3 eye_space_pos[];
+in vec2 scaled_window_space_pos[];
+
+out vec3 eye_space_pos2[];
+out float sharable_len[];
+
+float approx_cubic_arc_length(vec2 a, vec2 b, vec2 c, vec2 d)
+{ 
+   // Based on on Gravesen approximation...
+   float len = 0.5*(distance(a,b) + distance(b,c) + distance(c,d) + distance(d,a));
+   return max(1,len);
+}
+
+out float distu[]; // shared output for u LOD
+out float distv[]; // shared output for v LOD
+
+void main(void)
+{
+    float lenU0, lenV0, lenU1, lenV1;
+    float lenUA, lenUB, lenVA, lenVB;
+
+	//Uses data computed by each thread cooporatively to compute LOD values for
+	//u and v directions.
+	#ifdef SHARED_LOD
+
+	//Evaluate LOD for u direction
+
+	distu[TID] = distance(scaled_window_space_pos[TID],scaled_window_space_pos[ (TID &~0x3) + ((TID+1)&0x3) ] );
+	barrier();
+	distu[TID] += distu[(TID^1)];
+	barrier();
+	distu[TID] += distu[(TID^2)];
+	barrier();
+	distu[TID] *= 0.5;
+	barrier();
+	distu[TID] = max(distu[TID],1);
+	barrier();
+	lenU0 = distu[0];
+	lenUA = distu[4];
+	lenUB = distu[8];
+	lenU1 = distu[12];
+
+	//Evaluate LOD for v direction
+
+	distv[TID] = distance(scaled_window_space_pos[TID],scaled_window_space_pos[(TID+4)%16]);
+	barrier();
+	distv[TID] += distv[(TID^4)];
+	barrier();
+	distv[TID] += distv[(TID^8)];
+	barrier();
+	distv[TID] *= 0.5;
+	barrier();
+	distv[TID] = max(distv[TID],1);
+	barrier();
+	lenV0 = distv[0];
+	lenVA = distv[1];
+	lenVB = distv[2];
+	lenV1 = distv[3];
+
+	#else
+
+	//Evaluate LOD for u direction
+
+	lenU0 = approx_cubic_arc_length(scaled_window_space_pos[0],scaled_window_space_pos[1],scaled_window_space_pos[2],scaled_window_space_pos[3]);
+    lenUA = approx_cubic_arc_length(scaled_window_space_pos[4],scaled_window_space_pos[5],scaled_window_space_pos[6],scaled_window_space_pos[7]);
+    lenUB = approx_cubic_arc_length(scaled_window_space_pos[8],scaled_window_space_pos[9],scaled_window_space_pos[10],scaled_window_space_pos[11]);
+    lenU1 = approx_cubic_arc_length(scaled_window_space_pos[12],scaled_window_space_pos[13],scaled_window_space_pos[14],scaled_window_space_pos[15]);   
+
+	//Evaluate LOD for v direction
+
+	lenV0 = approx_cubic_arc_length(scaled_window_space_pos[0],scaled_window_space_pos[4],scaled_window_space_pos[8],scaled_window_space_pos[12]);
+    lenVA = approx_cubic_arc_length(scaled_window_space_pos[1],scaled_window_space_pos[5],scaled_window_space_pos[9],scaled_window_space_pos[13]);
+    lenVB = approx_cubic_arc_length(scaled_window_space_pos[2],scaled_window_space_pos[6],scaled_window_space_pos[10],scaled_window_space_pos[14]);
+    lenV1 = approx_cubic_arc_length(scaled_window_space_pos[3],scaled_window_space_pos[7],scaled_window_space_pos[11],scaled_window_space_pos[15]);
+
+	#endif
+
+
+    eye_space_pos2[TID] = eye_space_pos[TID];
+    
+    // Limit level-of-detail output to thread zero.    
+    if (TID == 0) {
+       
+	    // Outer LOD
+	    gl_TessLevelOuter[0] = lenU0;  // U=0 edge
+        gl_TessLevelOuter[1] = lenV0;  // V=0 edge
+        gl_TessLevelOuter[2] = lenU1;  // U=1 edge
+        gl_TessLevelOuter[3] = lenV1;  // V=1 edge
+        
+		// Inner LOD
+	    gl_TessLevelInner[0] = max(lenVA, lenVB);  // U direction spacing
+		gl_TessLevelInner[1] = max(lenUA, lenUB);  // V direction spacing        
+        
+    }
+}

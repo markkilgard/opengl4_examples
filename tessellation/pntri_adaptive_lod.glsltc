@@ -1,0 +1,71 @@
+
+// pntri_adaptive_lod.glsltc
+
+// DESCRIPTION:  GLSL tessellation control shader passing
+// through 3 control points to form a PN triangle patch with the
+// outer level-of-detail being directly proportional to the
+// window space length of the triangle path edges.
+
+// A PN triangle is a Bezier triangle (10 control points) with
+// its normals determined from a quadratic interpolation scheme
+// (rather than geometrically from the actual Bezier triangle's
+// gradients).
+
+// To off-line compile this code to assembly with Cg 3.0, use:
+// cgc -profile gp5tcp -oglsl -po InputPatchSize=3 -po PATCH_3 pntri_adaptive_lod.glsltc
+
+#version 400 compatibility
+layout(vertices=3) out;  // interior control points are per-patch
+
+#define TID gl_InvocationID  // thread ID
+
+in vec3 eye_space_pos[];
+in vec2 scaled_window_space_pos[];
+in vec3 eye_normal[];
+
+out vec3 eye_space_pos2[];
+out vec3 eye_space_normal[];
+
+out vec3 ccw_cp[];
+out vec3 cw_cp[];
+out vec3 mid_normal[];
+
+patch out vec3 b111;
+
+void main(void)
+{
+    // TIDp1 = counter-clockwise (plus 1) control point index from TID
+    int TIDp1 = TID<2 ? TID+1 : 0;  // Means TIDp1 = (TID+1)%3;
+    // TIDm1 = clockwise (minus 1) control point index from TID
+    int TIDm1 = TID>0 ? TID-1 : 2;  // Means TIDp1 = (TID+2)%3;
+
+    // Compute triangle LOD parameters.
+    // Each of 3 threads computes each of 3 edge lengths.
+    gl_TessLevelOuter[TID] = distance(scaled_window_space_pos[TIDm1],
+                                      scaled_window_space_pos[TID]);                                 
+    barrier();
+    gl_TessLevelInner[0] = max(gl_TessLevelOuter[0],
+                               max(gl_TessLevelOuter[1],gl_TessLevelOuter[2]));
+                               
+#define P eye_space_pos                       
+#define P2 eye_space_pos2
+#define N eye_normal                         
+
+    // ccw_cp[TID] is the control point immediate counter-clockwise from P[TID]
+    // cwc_cp[TID] is the control point immediate clockwise from P[TID]
+    ccw_cp[TID] = (2*P[TID] + P[TIDp1] - dot(P[TIDp1]-P[TID],N[TID])*N[TID])/3.0;
+    cw_cp[TID]  = (2*P[TID] + P[TIDm1] - dot(P[TIDm1]-P[TID],N[TID])*N[TID])/3.0;
+    
+    P2[TID] = ccw_cp[TID] + cw_cp[TID];
+    vec3 E = (P2[0] + P2[1] + P2[2])/6.0,  // Means (b210+b120+b021+b012+b102+b201)/6.0
+         V = (P[0] + P[1] + P[3])/3.0;
+    b111 = E + (E-V)/2.0;
+    
+    P2[TID] = P[TID];
+    eye_space_normal[TID] = N[TID];
+    
+    float v = 2*dot(P[TIDp1]-P[TID],N[TID]+N[TIDp1])
+            / dot(P[TIDp1]-P[TID],P[TIDp1]-P[TID]);
+    vec3 h = N[TID] + N[TIDp1] - v*(P[TIDp1]-P[TID]);
+    mid_normal[TID] = normalize(h);
+}
